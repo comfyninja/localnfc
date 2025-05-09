@@ -1,0 +1,635 @@
+from flask import Flask, render_template, request
+import random
+import sys
+import os
+import subprocess
+import datetime
+import database_connection
+# import database_local
+import numpy as np
+import pandas as pd
+from nfc_utils import NfcUtils
+from gpiozero import Buzzer
+from time import sleep
+nrcu = NfcUtils()
+buzzer = Buzzer(17)
+sys.path.append('./')
+
+def buzzer_blip():
+    buzzer.on()
+    sleep(0.25)
+    buzzer.off()
+    
+buzzer_blip()
+buzzer_blip()
+
+def qr_reader():
+    temp_fname = "./qr_recent/qr_read.txt"
+    os.system('touch ' + temp_fname)
+    os.system('python3 ./qr_read_sys.py') #should pass temp_fname in here later instead of hardcoding
+    with open(temp_fname) as f:
+        lines = f.read() ##Assume the sample file has 3 lines
+        first = lines.split('\n', 1)[0]
+        #also delete this file (do this later when we're confident)
+        os.system('rm ' + temp_fname)
+    print(str(first))
+    return str(first)
+  
+def nfc_reader():
+    id, card_data, card_text = nrcu.read_nfc_ultralight_single()
+    buzzer_blip()
+    print(f"\nCard ID: {id}\nCard Data:{card_data}\nCard Text: {str(card_text)}")
+    return id, card_data.get("type",None), card_data.get("message",None),
+
+def rarity_name(r):
+    if r == 1:
+        return 'Common'
+    elif r==2:
+        return 'Uncommon'#Are we connected to the internet, or running offline?
+    elif r==3:
+        return 'Rare'
+    elif r==4:
+        return 'Common Wyrd'
+    elif r==5:
+        return 'Uncommon Wyrd'
+    elif r==6:
+        return 'Rare Wyrd'
+    elif r==7:
+        return 'Masterwork'
+    else:
+        return 'Error'
+
+def get_prob_set(skill_lev):
+    # send in a player gathering skill level and get the
+    # set of probabilities for each item rarity level.
+    # don't laugh at the hardcoding here.  Please.
+    if skill_lev == 0:
+        return [0.5,0.5,0,0 ]
+    if skill_lev == 1:
+        return [0.0,1.0,0,0]
+    if skill_lev == 2:
+        return [0.0,1.0,0,0]
+    if skill_lev == 3:
+        return [0.0,0.70,0.30,0]
+    if skill_lev == 4:
+        return [0.0,0.50,0.50,0]
+    if skill_lev == 5:
+        return [0.0,0.32,0.30,0.38]
+    else:  #this shouldn't happen, so assume 0
+        return [0.5,0.5,0,0]
+    
+def printToPrnter(steve,ryan,renee,jessica, datestr):
+    #print(f"{steve}    {ryan}    {renee}   {jessica}")
+    #return ''
+
+    data = "^XA"\
+    "^FO50,20^GFA,3192,3192,19,gH01C,gH07E,g0JF,Y03JF8,Y07JFC,Y0KFC,Y0KFE,X07KFE,W01MF,W0NF,V03NF,U01JFEJF,S0103JFC7IF,S05DJFE1FE778,S07KFDFF83B8,S0OF01B8,R03NFD0198,Q01OFI098,Q03NF4I098,P0PFEI098,O03OF3EF8098,O07OF7FFBF98,O07TFB,O01JF0PFC,P0JFBFFA0A7JFE,P0LFK01IFE4,P0KF8L02JF8,O04JFEN07IFC,N01EJFCN01IFC,N03EJFCO03FFCC,N0LFEO073IF,N0LFEO041IF8,N0MFO041IF8,M0E7LFCN081EFF8,L01F7KF3FN08107FF8,L03F7FD8FF9FCK0BC8201FFC,L07IFD0BFC7FJ0DFC0203FFE,L07FFE40CFF1FF7JFC0403BFF,L07FFE6047FC3LF804061FE,K033FF82021OF00C0C0FFE,K07BFF03I03MFC008080IF,K0FBFF81J01KFEI08180IF8,J01IF9818L03FK08101CFF8,J03IF8C08T02038FF8,J01IF0C04T020607F,J01FFE0602T060607FF,I01CFFE0201T040C07FF8,I01EFE303V04180E7FC,I03EFE1018U0430183FE,I07FFE180CU0430303FE,I07FFC0C06V020603FC,I07FFC0601V060C03FC,I03FEE03X041807FFC,0013FC7018W04301C3FC,0039FC300CW0420303FE,007DFC1807X020603FE,007FF80C008W041C01FE,007FFC07g041803FC,00IFE038g0300FFC,00FFC700Eg0603C3F8,007F838038Y040E01FC,03BF80CgH081C03FE,03FFC06gH083003FE,03FFC038gH06003FE,07FFE00EgH0C00FFE,07FE7001Cg01807CF8,07FC18gI0101E03C,07FC0EgK07003F8,03FC038gJ0C003FC,0DFC01EgI01I07FC,1FFE003EgH02I07FC,1IFgL04007FFC,1FFBCgM07IFC,3FF0FgL03E00F,3FE01CgK06I0FC,3FF0078gI018I0FE,0FFI0FCgH03J0FF,07F8gQ0FF,7FFCgO01IF,7IF8gM0KF,7FC1EgL038007F,7FC03F08gI0CI03C,7FC007EgI01J03F,7FCgR07F87FEgR07F81FF8gQ07FC6IFgM01KFCFFC7FC7gJ0F01IFCFF803F8gI01J0FF8FF8gR03E,FF8gR03F8FFCgR07FCFFEJ08gJ0FC03FC3IF007gJ0IFE3FC0KF8gM0IFCEF8gR0FFCFF8gR03F8FF8gR03E,FFCJ04gH03FF807F8FFCI018gJ01F87F8IF001EgL01F7FC7KFgN07FFC1FFgQ01FFC07CgM038I07F83FCJ02gI0FC007F87FCJ0CgJ0780FC,7FEI07gK01E0FF,7FF007CgL078FF,3KFgM01IF,3IFCI08gG0F8007FF,3FF8I01gI0F003FF,03FJ06gI01C01FF,01EI01CgJ0E03F6,1FFI07gH0800383F8,1FF807C01g03800E3FC,1FFDFF002gG0F007FFC,0JFI04gG01801FFC,0IFI018gH0E00FFC,07FEI03g0E00300FFC,07FCI0E02X01801C1FF8,003C007804Y0600E1FC,00DE01E008Y038039FE,03FFBF0018W0400C01IF,03IFC00302V0300700FFE,01IFI0E04W0C0380FFE,01FFE00180CT0100301C0FFE,00FFC007008U04018060FDC,007FC01C0102T0300C030FE,I03E0F00204T0180603CFF,I0IFC00C041R080C0301EFF,001IF001808S04060180IF,001FFE0030182P01030300C0FFE,001FFE00E0302Q081818060FDE,I0FFE03802041N02040C0C071FDC,I07FE07006041N01060606039FC,I031FFC01C081O083020601DFE,J01FF803818308210842081030301FFE,J07FF006010208210841040818181FFE,J0IF00C030608210421060C18181FBE,J07FF03806040821042082040C0C3FBC,J07FF0700C0C1821042083060C0F3F98,J03IFE0180810410430C10206073FC,J0183FC030181041041041830207FFC,L0FFC060303041041041830307FFC,K01FFC0C0202041041060818387EF8,K03FFC3806060C1041060C181CFEF8,K01JF80C0C081041820C081CFE7,L0JF0180C18304182040C1IF,L0707F0381818304182060C1IF,M03FF870101020C183060E3IF,M03FF8E0303060C18306073FBE,M07IFE0602060C1830607FFBC,M03IFE0E060408183030IF88,M01F0FF0C060408183031IFC,N063FF7C0C0C08183039IFC,O07IFC1C0C1818387CFDF8,O07IFE3818181838FEFCF,O07FBIFC1818187CFEFC4,O01E7IFE783838FEFEFC,P047KFCFCFCFEFCFC,Q0FFBOFEFCF8,Q07E7OFCFC6,Q01C7FBMF9FC,S07E7FDFDFDF8F8,S07E7F3F9F9F8C,T047E3F3F9F8,U03E3F3F0C,W03E1E,^FS"\
+    "^CF B,30"\
+    "^FO240,30^FB500,3,1,C,0^FD"+str(steve)+"\&^FS"\
+    "^FO240,110^AE,30,14^FB500,1,1,C,0^FD"+str(jessica)+"\&^FS"\
+    "^FO240,140^AE,30,14^FB500,1,1,C,0^FD""Rarity: "+str(renee)+"\&^FS"\
+    "^FO440,190^GB100,1,1^FS"\
+    "^CF0,25"\
+    "^FO10,220^FB790,13, 5,L,0"\
+    "^FD"+str('.   ' + ryan)+ ' '+ datestr +"\&^FS"\
+    "^XZ"
+    print(data)
+    try:
+        f = open("code.zpl", "w")
+        f.write(data)
+        f.close()
+    except Exception as e:
+        return "Could not create zpl file :" +  str(e)
+
+    try:
+        subprocess.call(['lp', '-d', 'zebra450', '-o', 'raw', 'code.zpl'])
+    except Exception as e:
+        return "Error calling printer :" +  str(e)
+        
+    os.remove("code.zpl")
+
+    return "Print Succesful"
+
+def get_random_rarities(skill_lev,node_type):
+    # send in a skill level and get a random rarity level
+    # for your item
+    sk_lev = get_prob_set(skill_lev)
+    print('skill level probabilities')
+    print(sk_lev)
+    base_rarity = int(np.random.choice([0,1,2,3],p=sk_lev))
+    rarity_set = [base_rarity]
+    if base_rarity > 0:
+        # add a 1/3 chance of wyrd item on top
+        if np.random.choice([0,1],p=[0.67,0.33]) == 1:
+            rarity_set.append(base_rarity + 3) # should be the wyrd version of this class
+        if len(rarity_set) > 1 and base_rarity == 3: # rare+wyrd - a chance at masterwork (7)
+            if np.random.choice([0,1],p=[0.5,0.5]) == 1:
+                rarity_set.append(7) # masterwork!
+    return rarity_set
+    
+
+app = Flask(__name__)
+app.url_map.strict_slashes = False
+@app.route("/")
+def main():
+    #the original
+    return render_template('index.html',test_val = 'FROGS RULE!!')
+    
+    #just trust the node exists:
+    #return render_template('edited-gathering.html',test_val = 'FROGS RULE!!')
+
+    #just trust the node exists and iterate through a vector of items:
+    #return render_template('edited-gathering-vector.html',test_val = 'FROGS RULE!!')
+
+@app.route("/admin/player_lookup_by_name")
+def plbn():
+    #the original
+    #return render_template('index.html',test_val = 'FROGS RULE!!')
+    
+    #jsut trust the node exists:
+    return render_template('index_givename.html',test_val = 'FROGS RULE!!')
+
+
+@app.route('/player_lookup', methods=['POST','GET'])
+def plookup():
+       if request.method == 'POST':
+       #send along NFC code and ID:
+           user_name = request.form['user_name']
+           userid = database_connection.does_user_exist_by_name(user_name)
+           #print(user_info)
+           if userid == 0:
+               #there is no such player, say "try again" and offer a link tothe start again
+               return render_template('/check_player_failed.html')
+           else:
+               #hail the player and give them a button to push to scan in the NFC code
+               return render_template('/check_player.html',user_name = user_name,userid = userid)
+               #hail the player and give them a button to push to scan in the NFC code
+               #return render_template('/check_type.html',user_name = user_info,userid = userid)
+
+
+
+@app.route('/check_player', methods=['POST','GET'])
+def cplayer():
+       if request.method == 'POST':
+       #send along NFC code and ID:
+           userid = int(request.form['userid'])
+           user_info = database_connection.does_user_exist(userid)
+
+           print(user_info)
+           if user_info == 0:
+               #there is no such player, say "try again" and offer a link tothe start again
+               return render_template('/check_player_failed.html')
+           else:
+               #hail the player and give them a button to push to scan in the code
+               return render_template('/check_player.html',user_name = user_info,userid = userid)
+               #hail the player and give them a button to push to scan in the code
+               #return render_template('/check_type.html',user_name = user_info,userid = userid)
+
+
+
+@app.route('/grant_new_item', methods=['POST','GET'])
+def gni():
+   if request.method == 'POST':
+       userid = int(request.form['userid'])
+       user_info = database_connection.does_user_exist(userid)
+       print(user_info)
+       if user_info == 0:
+          #there is no such player, say "try again" and offer a link tothe start again
+          return render_template('/check_player_failed.html')
+       #send along code and ID:
+       #userid = int(request.form['userid'])
+       scav,forr,herb,fora,mine = database_connection.read_player_data(userid)
+       print(scav,forr,herb,fora,mine)
+       print(f"The node type is: {node_type}")
+       
+       #node type comes from the button pressed
+       node_type = request.form['node_type']
+       # so now we have the player's gathering skills and the type of object
+       # that this node represents, and assuming we made it this far then
+       # they're all good and work.  Now we want to get the skill applicable to
+       # this node and randomly pick a rarity of object given that skill level.
+       skill_lev = 0
+       if node_type == 'Foraging':
+           skill_lev = fora
+       elif node_type == 'Forestry':
+           skill_lev = forr
+       elif node_type == 'Herbalism':
+           skill_lev = herb
+       elif node_type == 'Mining':
+           skill_lev = mine
+       elif node_type == 'Scavenging':
+           skill_lev = scav
+       print('located skill level %s' % skill_lev)
+       gathered_rarities = get_random_rarities(skill_lev,node_type)
+       print('chose item rarity level(s) %s' % gathered_rarities)
+       #if rarity = 0 the gathering "failed," show that screen instead here
+       if gathered_rarities[0] == 0:
+           return render_template('nothing_found.html',err_msg=node_type)
+       
+       # okay, we've found items. Send them all:
+       for gathered_rarity in gathered_rarities:
+       
+           chosen_item_dict, num_eligible_items = database_connection.read_item_data(node_type,gathered_rarity)
+           
+           print('Out of %s eleigible items, this one was chosen:' % num_eligible_items)
+           steve = chosen_item_dict['Name']
+           print(steve)
+           ryan = chosen_item_dict['Description']
+           print(ryan)
+           renee = chosen_item_dict['Rarity']
+           print(renee)
+           jessica = chosen_item_dict['Type']
+           print(jessica)
+           
+           #so now we have:  Player ID, skill level, item rarity, the actual item gathered,
+           # the NFC code/node and that it's currently live. We would now like to:
+           
+           # Make a UID for the new item, and a DB/table entry for it (chosen_item_dict)
+           item_uid = database_connection.get_new_uid()
+           # change the node to Live: False
+
+           
+           data = {
+            u'Uid': item_uid,
+            u'Name': steve,
+            u'Description': ryan,
+            u'Type': jessica,
+            u'Rarity': renee }
+           print(data)
+           item_uid = database_connection.write_item(item_uid,data)
+           #now down here we write all the tag info to a file and print it
+           #make a print file from the userID and the Code and print it
+           now = datetime.datetime.now()
+           timestring = now.strftime('%Y-%m-%d-%H-%M-%S')
+           print('./requests/' + timestring + ".rtf", flush=True)
+           fname = './requests/' + timestring + ".rtf"
+           f = open(fname, "w")
+           f.write('\n')
+           f.write(" #")
+           f.write(str(item_uid))
+           f.write('\n')
+           f.write(" Name:")
+           f.write(str(steve))
+           f.write('\n')
+           f.write(" Description:")
+           f.write(str(ryan))
+           f.write('\n')
+           f.write(" Rarity:")
+           f.write(str(renee))
+           f.write('\n')
+           f.write(" Type:")
+           f.write(str(jessica))
+           
+           f.flush()
+           f.close()
+           
+           #print the output
+           subprocess.run(['lp','-o', 'orientation-requested=4', '-o', 'media=28x89mm',fname])
+
+       return render_template('edited-gathering.html',test_val = 'FROGS RULE!!')
+   else: #if it's GET, for example, just send user_id = 0
+       #x = random.random()
+       #return render_template('frule.html',passed_val = x,user_id = 0)
+       return render_template('edited-gathering.html',test_val = 'FROGS RULE!!')
+
+@app.route('/grant_new_item_vector', methods=['POST','GET'])
+def gniv():
+   if request.method == 'POST':
+       userid = int(request.form['userid'].strip())
+       
+       user_info = database_connection.does_user_exist(userid)
+       print(user_info)
+       if user_info == 0:
+          #there is no such player, say "try again" and offer a link tothe start again
+          return render_template('/check_player_failed.html')
+       #send along code and ID:
+       #userid = int(request.form['userid'])
+       scav,forr,herb,fora,mine = database_connection.read_player_data(userid)
+       print(scav,forr,herb,fora,mine)
+       
+       #node type comes from the button pressed
+       node_data = [['Foraging',int(request.form['Foraging']),fora],
+                    ['Forestry',int(request.form['Forestry']),forr],
+                    ['Herbalism',int(request.form['Herbalism']),herb],
+                    ['Mining',int(request.form['Mining']),mine],                    
+                    ['Scavenging',int(request.form['Scavenging']),scav]]
+       # so now we have the player's gathering skills and the type of object
+       # that this node represents, and assuming we made it this far then
+       # they're all good and work.  Now we want to get the skill applicable to
+       # this node and randomly pick a rarity of object given that skill level.
+
+       for skill_set in node_data:
+           node_type = skill_set[0]
+           skill_lev = skill_set[2]
+           print('Node type: %s' % node_type)
+           print('located skill level %s' % skill_lev)
+           for node_count in range(skill_set[1]):
+               print('node # %s' % node_count)
+               gathered_rarities = get_random_rarities(skill_lev,node_type)
+               print('chose item rarity level(s) %s' % gathered_rarities)
+               #if rarity = 0 the gathering "failed," show that screen instead here
+               if gathered_rarities[0] == 0:
+                   #don't do anything, no item here
+                   dummy = 1
+               else:
+                   #return render_template('nothing_found.html',err_msg=node_type)
+                   # okay, we've found items. Send them all:
+                   for gathered_rarity in gathered_rarities:
+                       chosen_item_dict, num_eligible_items = database_connection.read_item_data(node_type,gathered_rarity)
+                       
+                       print('Out of %s eleigible items, this one was chosen:' % num_eligible_items)
+                       steve = chosen_item_dict['Name']
+                       print(steve)
+                       ryan = chosen_item_dict['Description']
+                       print(ryan)
+                       renee = chosen_item_dict['Rarity']
+                       print(renee)
+                       jessica = chosen_item_dict['Type']
+                       print(jessica)
+                       
+                       #so now we have:  Player ID, skill level, item rarity, the actual item gathered,
+                       # the code/node and that it's currently live. We would now like to:
+                       # Make a UID for the new item, and a DB/table entry for it (chosen_item_dict)
+                       item_uid = database_connection.get_new_uid()
+                       # change the node to Live: False
+                       data = {
+                        u'Uid': item_uid,
+                        u'Name': steve,
+                        u'Description': ryan,
+                        u'Type': jessica,
+                        u'Rarity': renee}
+                       print(data)
+                       
+                       database_connection.write_item(item_uid,data)
+                       #now down here we write all the tag info to a file and print it
+                       #make a print file from the userID and the Code and print it
+                       now = datetime.datetime.now()
+                       timestring = now.strftime('%Y-%m-%d-%H-%M-%S')
+                       print('./requests/' + timestring + ".rtf", flush=True)
+                       fname = './requests/' + timestring + ".rtf"
+                       f = open(fname, "w")
+                       f.write('\n')
+                       f.write(" #")
+                       f.write(str(item_uid))
+                       f.write('\n')
+                       f.write(" Name:")
+                       f.write(str(steve))
+                       f.write('\n')
+                       f.write(" Description:")
+                       f.write(str(ryan))
+                       f.write('\n')
+                       f.write(" Rarity:")
+                       f.write(str(renee))
+                       f.write('\n')
+                       f.write(" Type:")
+                       f.write(str(jessica))
+                       
+                       f.flush()
+                       f.close()
+                       print(fname)
+                       
+                       #print the output
+                       subprocess.run(['lp','-o', 'orientation-requested=4', '-o', 'media=28x89mm',fname])
+                       
+       #return render_template('frule.html',passed_val = x,user_id=userid)
+       return render_template('edited-gathering-vector.html',test_val = 'FROGS RULE!!')
+   else: #if it's GET, for example, just send user_id = 0
+       #x = random.random()
+       #return render_template('frule.html',passed_val = x,user_id = 0)
+       return render_template('edited-gathering-vector.html',test_val = 'FROGS RULE!!')
+    
+    
+@app.route('/call_cam', methods=['POST','GET'])
+def frule():
+   # attempt to read an nfc ultralight chip with a json written on it:
+   item_id, item_type, item_message = nfc_reader()
+   node_type = ''
+   print('AAAAA')
+   print(item_id, item_type, item_message)
+   print('BBBB')
+   #if we dont' get at least an item ID, pull up a page that says to try again
+   if item_id is '' or item_type is None:
+       return render_template('error_no_qrcode.html')
+       
+   if 'fora' in item_type.lower():
+        node_type = 'Foraging'
+   elif 'fore' in item_type.lower():
+        node_type = 'Forestry'
+   elif 'herb' in item_type.lower():
+        node_type = 'Herbalism'
+   elif 'mini' in item_type.lower():
+        node_type = 'Mining'
+   elif 'scav' in item_type.lower():
+       node_type = 'Scavenging'
+   else:
+       return render_template('error_no_qrcode.html')
+        
+
+   if request.method == 'POST':
+       #send along QR code and ID:
+       userid = int(request.form['userid'])
+
+       scav,forr,herb,fora,mine = database_connection.read_player_data(userid)
+       print(scav,forr,herb,fora,mine)
+       #get the type of item and verify it's still live
+       is_live, node_errmsg = database_connection.set_node_gathered(item_id,node_type) # read_node_data(x)
+       # Scanned_Nodes: nid, Item_Type, Scanned
+       print(node_type, is_live)
+       
+       if is_live == False:
+           return render_template('error_node_scanned.html',err_msg=node_errmsg)
+
+        
+       # so now we have the player's gathering skills and the type of object
+       # that this node represents, and assuming we made it this far then
+       # they're all good and work.  Now we want to get the skill applicable to
+       # this node and randomly pick a rarity of object given that skill level.
+       skill_lev = 0
+       if node_type == 'Foraging':
+           skill_lev = fora
+       elif node_type == 'Forestry':
+           skill_lev = forr
+       elif node_type == 'Herbalism':
+           skill_lev = herb
+       elif node_type == 'Mining':
+           skill_lev = mine
+       elif node_type == 'Scavenging':
+           skill_lev = mine
+       print('located skill level %s' % skill_lev)
+       gathered_rarities = get_random_rarities(skill_lev,node_type)
+       print('chose item rarity level(s) %s' % gathered_rarities)
+       #if rarity = 0 the gathering "failed," show that screen instead here
+       if gathered_rarities[0] == 0:
+           # database_connection.set_node_live(x,False)
+           return render_template('nothing_found.html',err_msg=node_type)
+       # okay, we've found items. Send them all:
+       for gathered_rarity in gathered_rarities:
+           chosen_item_dict, num_eligible_items = database_connection.read_item_data(node_type,gathered_rarity)
+           print('Out of %s eleigible items, this one was chosen:' % num_eligible_items)
+           # Type, Components, Key, Rarity_num, Rarity, Type, How_Found, Mechanics_and_Notes, Durability 
+           # Type, Components, Key, Rarity_num, Rarity, Type, How_Found (Forestry), Mechanics_and_Notes, Durability
+           print(chosen_item_dict)
+           steve = chosen_item_dict['Components']
+           print(steve)
+           ryan = chosen_item_dict['Mechanics_and_Notes']
+           print(ryan)
+           renee = chosen_item_dict['Rarity']
+           print(ryan)
+           jessica = chosen_item_dict['Type']
+           print(ryan)
+
+           now = datetime.datetime.now()
+           timestring = now.strftime('%Y-%m-%d-%H-%M-%S')
+           datestring = now.strftime('%Y-%m-%d')
+           
+           # put this gathered item into the database
+           database_connection.write_player_crafted_item(database_connection.does_user_exist(userid),userid,steve,ryan,jessica,renee,'Gathered',timestring)
+
+           #now down here we write all the tag info to a file and print it
+           #make a print file from the userID and the QR Code and print it
+           
+           print('./requests/' + timestring + ".rtf", flush=True)
+           fname = './requests/' + timestring + ".rtf"
+           f = open(fname, "w")
+           # f.write('\n')
+           # f.write(" #")
+           # f.write(str(item_uid))
+           f.write('\n')
+           f.write(" Name:")
+           f.write(str(steve))
+           f.write('\n')
+           f.write(" Description:")
+           f.write(str(ryan))
+           f.write('\n')
+           f.write(" Type:")
+           f.write(str(jessica))
+           f.write('\n')
+           f.write(" Rarity:")
+           f.write(str(renee))
+           
+           f.flush()
+           f.close()
+
+           
+           #print the output
+           printToPrnter(steve,ryan,renee,jessica, datestring)
+       return render_template('frule.html',passed_val = steve,user_id = userid)
+   else: #if it's GET, for example, just send user_id = 0
+       #x = random.random()
+       return render_template('frule.html',passed_val = '',user_id = userid)
+  
+#ADMIN STUFF
+# here, let's make a general admin page that links to the admin functions we want:
+# TODO: protect this admin page with some kind of login/credentials.  Maybe use
+# firebase for google credential checking
+@app.route('/admin', methods=['GET'])
+def adminroot():
+    return render_template('admin_root.html')
+
+@app.route('/admin/item_checkin', methods=['GET','POST'])
+def itemcheckin():
+    if request.method == 'GET': #this is the first time we got here just show the page
+        return render_template('admin_item_checkin.html',last_qr = 0)
+    if request.method == 'POST': #we just clicked the button! First, figure out which sort of item:
+        node_type = request.form['node_type']
+        print(node_type)
+        #okay, now we're trying to read the NFC chip
+        qr_code = qr_reader()
+        print(qr_code)
+        if qr_code == '':
+            print('no QR code found')
+            return render_template('admin_item_checkin.html',last_qr = 'FAILED - NO NFC READ FOUND')
+        
+        
+        #now create a new node with "NodeID", "Type" and "Live"=True. Overwrite as needed.
+        database_connection.write_node(node_type,qr_code)
+        
+        return render_template('admin_item_checkin.html',last_qr = qr_code)
+
+
+@app.route('/admin/list_upload', methods=['GET','POST'])
+def listupload():
+    if request.method == 'GET': #this is the first time we got here, so just show the page
+        return render_template('admin_list_upload.html',last_fname = 'NO FILE YET')
+    if request.method == 'POST': #we just clicked the button, so read in and parse the file :
+        list_file_name = request.form['list_file_name']
+        #open and parse this file, then 
+        try:
+            df = pd.read_csv(list_file_name)
+            print(df.head()) #just to check what we got
+            for index, row in df.iterrows():
+                print(row.to_dict)
+                database_connection.write_list(row['Name'],row['Description'],row['Rarity'],row['Type'])
+
+        except Exception as parse_err:
+            return render_template('admin_list_upload.html',last_fname = 'PARSING/UPLOAD FAILED WITH ERROR: ' + str(parse_err))
+        
+        #otherwise, the upload works!
+        return render_template('admin_list_upload.html',last_fname = str(list_file_name))
+        
+@app.route('/admin/player_upload', methods=['GET','POST'])
+def playerupload():
+    if request.method == 'GET': #this is the first time we got here, so just show the page
+        return render_template('admin_player_upload.html',last_fname = 'NO FILE YET')
+    if request.method == 'POST': #we just clicked the button, so read in and parse the file :
+        player_file_name = request.form['list_file_name']
+        #open and parse this file, then upload the parts
+        try:
+            df = pd.read_csv(player_file_name)
+            print(df.head()) #just to check what we got
+            for index, row in df.iterrows():
+                print(row.to_dict)
+                database_connection.write_players(row['Name'],row['ID'],row['Foraging'],row['Forestry'],row['Herbalism'],row['Mining'],row['Scavenging'])
+
+        except Exception as parse_err:
+            return render_template('admin_player_upload.html',last_fname = 'PARSING/UPLOAD FAILED WITH ERROR: ' + str(parse_err))
+        
+        #otherwise, the upload works!
+        return render_template('admin_player_upload.html',last_fname = str(player_file_name))
+    
+@app.route('/admin/activate_all_nodes', methods=['GET','POST'])
+def activate_all_nodes():
+    database_connection.activate_all_nodes()
+    return render_template('admin_root.html')
+
+if __name__ == "__main__":
+   app.run()
+
+
+
+
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+
